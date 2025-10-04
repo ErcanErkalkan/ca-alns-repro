@@ -52,12 +52,12 @@ runs:
 
 aggregate:
 	@mkdir -p $(RESULTS)
-	@$(PY) -m analysis.aggregate_results \
+	@$(PY) scripts/aggregate_results.py \
 	  --glob "$(RUNS)/**/seed_*.json" \
 	  --out_csv $(RESULTS)/runs.csv
 
 stats:
-	@$(PY) -m analysis.stats_and_tables \
+	@$(PY) scripts/make_tables.py \
 	  --runs_csv $(RESULTS)/runs.csv \
 	  --out_tex $(RESULTS)/tables.tex \
 	  --out_json $(RESULTS)/tables.json \

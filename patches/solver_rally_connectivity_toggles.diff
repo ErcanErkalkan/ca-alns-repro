@@ -1,0 +1,33 @@
+diff --git a/src/ca_alns/solver.py b/src/ca_alns/solver.py
+--- a/src/ca_alns/solver.py
++++ b/src/ca_alns/solver.py
+@@ -1,12 +1,28 @@
+-def solve(inst, algo, E_max, T_max, rho, v_max):
+-    # existing entrypoint; this patch adds connectivity_mode & rally_enabled toggles
++def solve(inst, algo, E_max, T_max, rho, v_max, connectivity_mode="safety", rally_enabled=True):
++    """
++    connectivity_mode: 'safety' (surrogate+BFS @ R-rho + cadence) or 'penalty'
++    rally_enabled: enable rally-point generation/insertion operator
++    """
+     # ...
+-    screen = SafetyFirstScreen(rho=rho, v_max=v_max)   # old
++    if connectivity_mode == "safety":
++        screen = SafetyFirstScreen(rho=rho, v_max=v_max)
++    else:
++        screen = PenaltyOnlyScreen()
+ 
+     ops = default_alns_operators()
+-    # rally operator always on (old)
+-    ops.enable_rally()
++    if rally_enabled:
++        ops.enable_rally()
++    else:
++        ops.disable_rally()
+ 
+-    if algo in ("ga","de"):
++    if algo in ("ga","de"):
+         return run_evolutionary(inst, algo=algo, E_max=E_max, T_max=T_max)
+-    else:
+-        return run_alns(inst, ops=ops, screen=screen, E_max=E_max, T_max=T_max)
++    else:
++        return run_alns(inst, ops=ops, screen=screen, E_max=E_max, T_max=T_max)
