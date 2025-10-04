@@ -1,7 +1,7 @@
-# Repro Makefile
+# Repro Makefile (Windows/POSIX)
 
 PY ?= python
-SRC := $(PWD)/src
+SRC := $(CURDIR)/src
 export PYTHONPATH := $(SRC):$(PYTHONPATH)
 
 RUNS ?= runs
@@ -10,16 +10,16 @@ FIGS ?= figs
 NS3_TRACES ?= ns3_traces
 NS3_LOGS ?= ns3_logs
 
-# Scales & default mapping
+# Scales & algs
 SCALES ?= Small Medium Large
 ALGS ?= de ga alns-std alns-ls ca-alns
-SEEDS ?= $(shell seq 0 29)
+# Windows'ta seq yok; run_grid varsayılan 0..29 seed kullanır.
 
-# Default budgets (Fairness)
+# Fairness budgets
 E_MAX ?= 100000
 T_MAX ?= 600
 
-# Scale->(n_uav n_targets) mapping (used by scripts/run_grid.py)
+# Scale->(n_uav n_targets)
 SMALL_UAV ?= 5
 SMALL_TGT ?= 20
 MEDIUM_UAV ?= 10
@@ -29,7 +29,7 @@ LARGE_TGT ?= 100
 XL_UAV ?= 50
 XL_TGT ?= 1000
 
-# Figures enable flags
+# Figures flags
 DO_CONVERGENCE ?= 1
 DO_EVAL_PROFILE ?= 1
 DO_SCALING ?= 1
@@ -40,45 +40,44 @@ all: runs aggregate stats plots
 
 runs:
 	@$(PY) scripts/run_grid.py \
-	  --runs_root $(RUNS) \
+	  --runs_root "$(RUNS)" \
 	  --e_max $(E_MAX) --t_max $(T_MAX) \
 	  --scales $(SCALES) \
 	  --algs $(ALGS) \
-	  --seeds $(SEEDS) \
 	  --small $(SMALL_UAV) $(SMALL_TGT) \
 	  --medium $(MEDIUM_UAV) $(MEDIUM_TGT) \
 	  --large $(LARGE_UAV) $(LARGE_TGT) \
 	  --xl $(XL_UAV) $(XL_TGT)
 
 aggregate:
-	@mkdir -p $(RESULTS)
+	@$(PY) -c "import os; os.makedirs('$(RESULTS)', exist_ok=True)"
 	@$(PY) scripts/aggregate_results.py \
 	  --glob "$(RUNS)/**/seed_*.json" \
-	  --out_csv $(RESULTS)/runs.csv
+	  --out_csv "$(RESULTS)/runs.csv"
 
 stats:
 	@$(PY) scripts/make_tables.py \
-	  --runs_csv $(RESULTS)/runs.csv \
-	  --out_tex $(RESULTS)/tables.tex \
-	  --out_json $(RESULTS)/tables.json \
+	  --runs_csv "$(RESULTS)/runs.csv" \
+	  --out_tex "$(RESULTS)/tables.tex" \
+	  --out_json "$(RESULTS)/tables.json" \
 	  --caption "Performance and connectivity statistics" \
 	  --label "tab:main_results"
 
 plots:
-ifneq ($(DO_CONVERGENCE),0)
+ifeq ($(DO_CONVERGENCE),1)
 	@$(PY) -m plots.convergence \
-	  --agg $(RESULTS)/runs.csv \
-	  --out $(FIGS)/convergence.png
+	  --agg "$(RESULTS)/runs.csv" \
+	  --out "$(FIGS)/convergence.png"
 endif
-ifneq ($(DO_EVAL_PROFILE),0)
+ifeq ($(DO_EVAL_PROFILE),1)
 	@$(PY) scripts/plot_eval_profile.py \
-	  --agg $(RESULTS)/runs.csv \
-	  --out $(FIGS)/eval_profile.png
+	  --agg "$(RESULTS)/runs.csv" \
+	  --out "$(FIGS)/eval_profile.png"
 endif
-ifneq ($(DO_SCALING),0)
+ifeq ($(DO_SCALING),1)
 	@$(PY) scripts/plot_scaling.py \
-	  --agg $(RESULTS)/runs.csv \
-	  --out $(FIGS)/scaling.png
+	  --agg "$(RESULTS)/runs.csv" \
+	  --out "$(FIGS)/scaling.png"
 endif
 
 ns3: ns3-export ns3-aggregate ns3-plots
@@ -90,35 +89,35 @@ ALGO ?= ca-alns
 ns3-export:
 	@$(PY) -m ns3.export_traces \
 	  --glob "$(RUNS)/$(SCALE)/$(ALGO)/seed_*.json" \
-	  --out_dir $(NS3_TRACES)/$(SCALE)
+	  --out_dir "$(NS3_TRACES)/$(SCALE)"
 
 # Aggregate ns-3 logs -> results/ns3_$(SCALE).csv
 ns3-aggregate:
 	@$(PY) -m ns3.ns3_aggregate \
-	  --logs $(NS3_LOGS)/$(SCALE) \
-	  --out $(RESULTS)/ns3_$(SCALE).csv
+	  --logs "$(NS3_LOGS)/$(SCALE)" \
+	  --out "$(RESULTS)/ns3_$(SCALE).csv"
 
 # Plot PDR heatmap / delay CDF / hop CDF
 ns3-plots:
 	@$(PY) -m plots.pdr_heatmap \
-	  --csv $(RESULTS)/ns3_$(SCALE).csv \
-	  --out $(FIGS)/pdr_heatmap_$(SCALE).png
+	  --csv "$(RESULTS)/ns3_$(SCALE).csv" \
+	  --out "$(FIGS)/pdr_heatmap_$(SCALE).png"
 	@$(PY) -m plots.delay_cdf \
-	  --csv $(RESULTS)/ns3_$(SCALE).csv \
-	  --out $(FIGS)/delay_cdf_$(SCALE).png
+	  --csv "$(RESULTS)/ns3_$(SCALE).csv" \
+	  --out "$(FIGS)/delay_cdf_$(SCALE).png"
 	@$(PY) -m plots.hop_cdf \
-	  --csv $(RESULTS)/ns3_$(SCALE).csv \
-	  --out $(FIGS)/hop_cdf_$(SCALE).png
+	  --csv "$(RESULTS)/ns3_$(SCALE).csv" \
+	  --out "$(FIGS)/hop_cdf_$(SCALE).png"
 
-# Fill LaTeX placeholders in TEX source using results/tables.json mapping
+# Fill LaTeX placeholders in TEX using results/tables.json
 # Usage: make fill-tex TEX=paper/main.tex OUT=paper/main_filled.tex
 TEX ?= paper/main.tex
 OUT ?= paper/main_filled.tex
 fill-tex:
 	@$(PY) -m analysis.fill_placeholders \
-	  --tex $(TEX) \
-	  --mapping $(RESULTS)/tables.json \
-	  --out $(OUT)
+	  --tex "$(TEX)" \
+	  --mapping "$(RESULTS)/tables.json" \
+	  --out "$(OUT)"
 
 clean:
-	@rm -rf $(RUNS) $(RESULTS) $(FIGS) $(NS3_TRACES) $(NS3_LOGS)
+	@$(PY) -c "import shutil; [shutil.rmtree(p, ignore_errors=True) for p in [r'$(RUNS)', r'$(RESULTS)', r'$(FIGS)', r'$(NS3_TRACES)', r'$(NS3_LOGS)']]"

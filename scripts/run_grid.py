@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-import argparse, os, subprocess, sys, shlex
+import argparse, os, subprocess, sys, shlex, importlib.util
+from pathlib import Path
+
+def _module_exists(modname: str) -> bool:
+    # Güvenli kontrol: üst paket yoksa ModuleNotFoundError atmasın
+    try:
+        spec = importlib.util.find_spec(modname)
+    except ModuleNotFoundError:
+        return False
+    return spec is not None
+
+def _file_exists(path: str) -> bool:
+    return Path(path).is_file()
 
 def main():
     p = argparse.ArgumentParser()
@@ -22,6 +34,32 @@ def main():
         "XL": args.xl,
     }
 
+    # Koşucu seçimi: önce modül, sonra dosya fallback
+    runner_module = "experiments.run_experiment"
+    run_as_module = False
+    runner_file = None
+
+    if _module_exists(runner_module):
+        run_as_module = True
+    else:
+        # Modül yoksa olası dosya yollarını sırayla dene
+        for cand in [
+            "experiments/run_experiment.py",
+            "run_experiment.py",
+            "experiments/run_experiment_patched.py",
+            "run_experiment_patched.py",
+        ]:
+            if _file_exists(cand):
+                runner_file = cand
+                break
+        if runner_file is None:
+            print("ERROR: 'experiments.run_experiment' modülü da yok, dosya da bulunamadı.\n"
+                  "Lütfen aşağıdakilerden biri mevcut olsun:\n"
+                  " - src/experiments/run_experiment.py (veya run_experiment_patched.py)\n"
+                  " - proje kökünde run_experiment.py (veya run_experiment_patched.py)",
+                  file=sys.stderr)
+            sys.exit(1)
+
     for scale in args.scales:
         n_uav, n_tgt = scale_map[scale]
         for algo in args.algs:
@@ -29,17 +67,29 @@ def main():
             os.makedirs(out_dir, exist_ok=True)
             for seed in args.seeds:
                 out_file = os.path.join(out_dir, f"seed_{seed}.json")
-                cmd = [
-                    sys.executable, "-m", "experiments.run_experiment",
-                    "--algo", algo,
-                    "--seed", str(seed),
-                    "--E_max", str(args.e_max),
-                    "--T_max", str(args.t_max),
-                    "--out", out_file,
-                    # The following two require a tiny patch to run_experiment.py:
-                    "--n_uav", str(n_uav),
-                    "--n_targets", str(n_tgt),
-                ]
+                if run_as_module:
+                    cmd = [
+                        sys.executable, "-m", runner_module,
+                        "--algo", algo,
+                        "--seed", str(seed),
+                        "--E_max", str(args.e_max),
+                        "--T_max", str(args.t_max),
+                        "--out", out_file,
+                        "--n_uav", str(n_uav),
+                        "--n_targets", str(n_tgt),
+                    ]
+                else:
+                    cmd = [
+                        sys.executable, runner_file,
+                        "--algo", algo,
+                        "--seed", str(seed),
+                        "--E_max", str(args.e_max),
+                        "--T_max", str(args.t_max),
+                        "--out", out_file,
+                        "--n_uav", str(n_uav),
+                        "--n_targets", str(n_tgt),
+                    ]
+
                 print("RUN:", " ".join(shlex.quote(c) for c in cmd))
                 try:
                     subprocess.run(cmd, check=True)
