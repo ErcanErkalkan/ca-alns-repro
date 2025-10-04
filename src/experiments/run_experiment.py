@@ -1,17 +1,22 @@
-
-import argparse, json, time, random
+import argparse, json, time, random, os
 from pathlib import Path
+
+# Config & core
 from ca_alns.config import ConnectivityConfig, OperatorConfig, BudgetConfig, PenaltyConfig, ExperimentConfig
-from ca_alns.eval import compute_upper_bounds, fitness_value
-from ca_alns.core import CAALNS
-from ca_alns.energy import measure_energy_wh
+from ca_alns.eval import compute_upper_bounds
 from ca_alns.connectivity import compute_cadence_bound
+from ca_alns.core import CAALNSFull
+
+# Baselines
 from baselines.ga import GA
 from baselines.de import DE
 
+# Problem helpers
+from ca_alns.problem import Node, UAV, Instance
+
 def parse_args():
-    p = argparse.ArgumentParser(description="CA-ALNS / GA / DE experiment runner with fairness")
-    p.add_argument("--algo", choices=["ca-alns","ga","de"], default="ca-alns")
+    p = argparse.ArgumentParser(description="CA-ALNS / ALNS-Std / ALNS+LS / GA / DE experiment runner (fair budgets)")
+    p.add_argument("--algo", choices=["ca-alns","alns-std","alns-ls","ga","de"], default="ca-alns")
     p.add_argument("--E_max", type=int, default=100000)
     p.add_argument("--T_max", type=float, default=0.0, help="0 = ignore wall time")
     p.add_argument("--range_R", type=float, default=150.0)
@@ -29,94 +34,57 @@ def parse_args():
     p.add_argument("--lambda_rp", type=float, default=0.0)
     p.add_argument("--lambda_mksp", type=float, default=0.0)
 
+    # variant-independent but can be overridden by variant flags
     p.add_argument("--use_rally", action="store_true", default=True)
     p.add_argument("--warm_blocks", type=int, default=3)
     p.add_argument("--p_warm", type=float, default=1e-2)
 
+    # instance size
+    p.add_argument("--n_uav", type=int, default=5)
+    p.add_argument("--n_targets", type=int, default=20)
+    p.add_argument("--span", type=float, default=500.0)
+
+    # misc
     p.add_argument("--measure_energy", action="store_true", default=False)
     p.add_argument("--avg_power_w", type=float, default=50.0)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=str, default="runs/out.json")
     return p.parse_args()
 
-def main():
-    args = parse_args()
-    rng = random.Random(args.seed)
-
-    conn = ConnectivityConfig(mode=args.mode, R=args.range_R, rho=args.rho, v_max=args.vmax,
-                              tx_power_dbm=args.tx_power_dbm, noise_dbm=args.noise_dbm,
-                              gamma_th_db=args.gamma_th_db, bidirectional=args.bidirectional)
-    # auto cadence if None
-    delta_tau = compute_cadence_bound(conn.R, conn.rho, conn.v_max)
-
-    ops = OperatorConfig(use_rally_points=args.use_rally, warm_blocks=args.warm_blocks, p_warm=args.p_warm)
-    bud = BudgetConfig(E_max=args.E_max, T_max=args.T_max if args.T_max>0 else None)
-
-    # Penalty calibration: set disc/cap/bat high using upper bound proxy
-    coords = [(0.0,0.0)] + [(10.0,0.0), (0.0,10.0)]  # placeholder geometry
-    Cmax_aug = compute_upper_bounds(coords, depot_idx=0, n_uav=2, alpha=args.alpha)
-    lam = max(1.01*Cmax_aug, 1e3)
-    pen = PenaltyConfig(alpha=args.alpha,
-                        lambda_disc=lam, lambda_cap=lam, lambda_bat=lam,
-                        lambda_bal=args.lambda_bal, lambda_wait=args.lambda_wait,
-                        lambda_rp=args.lambda_rp, lambda_mksp=args.lambda_mksp)
-
-    cfg = ExperimentConfig(connectivity=conn, operators=ops, budget=bud, penalties=pen)
-
-    # seed initial solution
-    init = {'total_travel': 100.0, 'connected': True, 'payload_ok': True, 'battery_ok': True,
-            'workload_max': 60.0, 'workload_min': 40.0, 'rally_points_count': 0, 'rally_wait_sum': 0.0,
-            'mean_insert_cost': 10.0}
-
-    def run_algo():
-        if args.algo == "ga":
-            algo = GA(fitness_penalties=pen.__dict__, E_max=bud.E_max, seed=args.seed)
-            return algo.run(init)
-        elif args.algo == "de":
-            algo = DE(fitness_penalties=pen.__dict__, E_max=bud.E_max, seed=args.seed)
-            return algo.run(init)
-        else:
-            solver = CAALNS(cfg, rng)
-            return solver.run(init, penalties_final=pen.__dict__)
-
-    if args.measure_energy:
-        result, E_wh = measure_energy_wh(run_algo, avg_power_w=args.avg_power_w)
-        result['E_wh'] = E_wh
-    else:
-        result = run_algo()
-
-    out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(result, indent=2), encoding="utf-8")
-    print(json.dumps(result, indent=2))
-
-# old main removed
-
-
-from ca_alns.problem import Node, UAV, Instance
-from ca_alns.core import CAALNSFull
-from ca_alns.surrogate import FrozenSurrogate
-
-def gen_random_instance(seed: int, n_uav: int = 5, n_targets: int = 20, span: float = 500.0, v_max: float = 15.0) -> Instance:
+def gen_random_instance(seed: int, n_uav: int, n_targets: int, span: float, v_max: float) -> Instance:
     rng = random.Random(seed)
     depot = Node(0, 0.0, 0.0)
     targets = [Node(i+1, rng.uniform(-span, span), rng.uniform(-span, span)) for i in range(n_targets)]
     uavs = [UAV(i, v_max=v_max) for i in range(n_uav)]
     return Instance(depot=depot, targets=targets, uavs=uavs)
 
+def _variant_flags(algo: str):
+    """Returns dict: use_surrogate (safety-first), use_rally, enable_ls"""
+    if algo == "ca-alns":
+        return dict(use_surrogate=True, use_rally=True, enable_ls=False)
+    if algo == "alns-std":
+        return dict(use_surrogate=False, use_rally=False, enable_ls=False)
+    if algo == "alns-ls":
+        return dict(use_surrogate=False, use_rally=False, enable_ls=True)
+    # GA / DE fallthrough
+    return dict(use_surrogate=False, use_rally=False, enable_ls=False)
+
 def main():
     args = parse_args()
     rng = random.Random(args.seed)
 
-    inst = gen_random_instance(args.seed, n_uav=5, n_targets=20, span=500.0, v_max=args.vmax)
+    # Instance
+    inst = gen_random_instance(args.seed, n_uav=args.n_uav, n_targets=args.n_targets, span=args.span, v_max=args.vmax)
 
+    # Connectivity + cadence
     conn = ConnectivityConfig(mode=args.mode, R=args.range_R, rho=args.rho, v_max=args.vmax,
                               tx_power_dbm=args.tx_power_dbm, noise_dbm=args.noise_dbm,
                               gamma_th_db=args.gamma_th_db, bidirectional=args.bidirectional)
-    delta_tau = compute_cadence_bound(conn.R, conn.rho, conn.v_max)
+    _ = compute_cadence_bound(conn.R, conn.rho, conn.v_max)
 
+    # Budgets & penalties
     ops = OperatorConfig(use_rally_points=args.use_rally, warm_blocks=args.warm_blocks, p_warm=args.p_warm)
     bud = BudgetConfig(E_max=args.E_max, T_max=args.T_max if args.T_max>0 else None)
-
     coords = [(inst.depot.x, inst.depot.y)] + [(t.x, t.y) for t in inst.targets]
     Cmax_aug = compute_upper_bounds(coords, depot_idx=0, n_uav=len(inst.uavs), alpha=args.alpha)
     lam = max(1.01*Cmax_aug, 1e3)
@@ -124,6 +92,17 @@ def main():
                         lambda_disc=lam, lambda_cap=lam, lambda_bat=lam,
                         lambda_bal=args.lambda_bal, lambda_wait=args.lambda_wait,
                         lambda_rp=args.lambda_rp, lambda_mksp=args.lambda_mksp)
+
+    # Apply variant flags
+    flags = _variant_flags(args.algo)
+    # rally override
+    ops.use_rally_points = bool(flags.get("use_rally", ops.use_rally_points))
+    # try to enable local search if OperatorConfig supports it (best-effort)
+    if flags.get("enable_ls", False):
+        try:
+            setattr(ops, "use_local_search", True)
+        except Exception:
+            pass
 
     cfg = ExperimentConfig(connectivity=conn, operators=ops, budget=bud, penalties=pen)
     sur_file = str((Path(__file__).resolve().parents[2] / "artifacts" / "surrogate_frozen.json"))
@@ -136,14 +115,32 @@ def main():
             algo = DE(fitness_penalties=pen.__dict__, E_max=bud.E_max, seed=args.seed)
             return algo.run({'total_travel': 100.0, 'connected': True, 'payload_ok': True, 'battery_ok': True})
         else:
-            solver = CAALNSFull(cfg, rng, instance=inst, surrogate_path=sur_file)
-            return solver.run_full(penalties_final=pen.__dict__, surrogate_path=sur_file)
+            # ALNS family
+            use_sur = flags.get("use_surrogate", True)
+            spath = sur_file if use_sur else None
+            solver = CAALNSFull(cfg, rng, instance=inst, surrogate_path=spath)
+            if use_sur:
+                return solver.run_full(penalties_final=pen.__dict__, surrogate_path=spath)
+            else:
+                # penalty-only path: pass no surrogate
+                return solver.run_full(penalties_final=pen.__dict__, surrogate_path=None)
 
     if args.measure_energy:
-        result, E_wh = measure_energy_wh(run_algo, avg_power_w=args.avg_power_w)
-        result['E_wh'] = E_wh
+        # simple average-power energy estimate (portable)
+        start = time.time()
+        result = run_algo()
+        elapsed = time.time() - start
+        result["E_wh"] = args.avg_power_w * (elapsed/3600.0)
     else:
         result = run_algo()
+
+    # normalize expected keys for aggregator
+    result.setdefault("total_travel", None)
+    result.setdefault("fitness", result.get("best_fitness"))
+    result.setdefault("connected", None)
+    result.setdefault("snapshots_connected_pct", None)
+    result.setdefault("E_used", None)
+    result.setdefault("wallclock_s", None)
 
     out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2), encoding="utf-8")
