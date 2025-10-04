@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it as below.
+title: "Connectivity-Aware Adaptive Large Neighborhood Search with Rally-Point Assistance for Multi-UAV Routing under FANET Connectivity Constraints (CA-ALNS Repro)"
+authors:
+  - family-names: Erkalkan
+    given-names: Ercan
+    affiliation: Marmara University
+    email: ercan.erkalkan@marmara.edu.tr
+date-released: 2025-10-04
+version: "1.0.0"
+license: MIT
+repository-code: https://example.org/placeholder-repo
+doi: 10.5281/zenodo.XXXXXXX
+preferred-citation:
+  type: article
+  title: "Connectivity-Aware Adaptive Large Neighborhood Search with Rally-Point Assistance for Multi-UAV Routing under FANET Connectivity Constraints"
+  authors:
+    - family-names: Erkalkan
+      given-names: Ercan
+  journal: Ad Hoc Networks
+  year: 2025
+  doi: 10.1016/j.adhoc.XXXXXX

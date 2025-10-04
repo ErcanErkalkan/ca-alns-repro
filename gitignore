@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+runs/
+results/
+figs/
+ns3_traces/
+ns3_logs/
+artifacts/
+*.pyc
+*.pyo
+*.DS_Store
